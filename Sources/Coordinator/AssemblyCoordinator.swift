@@ -4,26 +4,27 @@ import SwiftUI
 /// A navigation flow independent of tabs, parent coordinators, and screen architecture.
 @MainActor
 @Observable
-public final class AssemblyCoordinator<Route: Hashable> {
-    public typealias Builder = @MainActor (Route, DIContainer, AssemblyCoordinator<Route>) -> AnyView
+public final class AssemblyCoordinator<Assembler: ScreenAssembly> {
+    public typealias Route = Assembler.Route
+    public typealias Destination = Screen<Route, Assembler.Content>
 
     public let container: DIContainer
-    public var root: Screen<Route> {
+    public var root: Destination {
         guard let rootScreen else {
             preconditionFailure("An assembly must not read root while assembling the root screen")
         }
         return rootScreen
     }
     /// SwiftUI writes this same array when the user navigates back interactively.
-    public var path: [Screen<Route>] = []
-    public private(set) var presentation: Presentation<Route>?
+    public var path: [Destination] = []
+    public private(set) var presentation: Presentation<Route, Assembler.Content>?
 
-    @ObservationIgnored private let builder: Builder
-    @ObservationIgnored private var rootScreen: Screen<Route>?
+    @ObservationIgnored private let assembly: Assembler
+    @ObservationIgnored private var rootScreen: Destination?
 
-    public init(root: Route, container: DIContainer, assemble: @escaping Builder) {
+    public init(root: Route, container: DIContainer, assembly: Assembler) {
         self.container = container
-        self.builder = assemble
+        self.assembly = assembly
         self.rootScreen = makeScreen(root)
     }
 
@@ -59,7 +60,7 @@ public final class AssemblyCoordinator<Route: Hashable> {
         return true
     }
 
-    private func makeScreen(_ route: Route) -> Screen<Route> {
-        Screen(route: route, content: builder(route, container, self))
+    private func makeScreen(_ route: Route) -> Destination {
+        Screen(route: route, content: assembly.assemble(route, container: container, coordinator: self))
     }
 }

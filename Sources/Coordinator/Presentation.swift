@@ -1,4 +1,4 @@
-import Foundation
+import SwiftUI
 
 public enum PresentationStyle: Equatable {
     case sheet
@@ -6,8 +6,8 @@ public enum PresentationStyle: Equatable {
 }
 
 /// Only one modal can be owned by a coordinator at a time.
-public struct Presentation<Route: Hashable>: Identifiable {
+public struct Presentation<Route: Hashable, Content: View>: Identifiable {
     public var id: UUID { screen.id }
     public let style: PresentationStyle
-    public let screen: Screen<Route>
+    public let screen: Screen<Route, Content>
 }

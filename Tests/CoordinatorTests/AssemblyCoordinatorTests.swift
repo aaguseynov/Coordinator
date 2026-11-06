@@ -6,18 +6,18 @@ import Testing
 struct AssemblyCoordinatorTests {
     enum Route: Hashable { case login, details(Int) }
 
-    private func makeCoordinator() -> AssemblyCoordinator<Route> {
-        AssemblyCoordinator(root: .login, container: DIContainer()) { route, _, _ in
-            AnyView(Text(String(describing: route)))
-        }
+    private func makeCoordinator() -> AssemblyCoordinator<TestAssembly<Route, Text>> {
+        AssemblyCoordinator(root: .login, container: DIContainer(), assembly: TestAssembly { route, _, _ in
+            Text(String(describing: route))
+        })
     }
 
     @Test func assemblesOncePerScreenAndPreservesRoot() {
         var builds = 0
-        let coordinator = AssemblyCoordinator<Route>(root: .login, container: DIContainer()) { _, _, _ in
+        let coordinator = AssemblyCoordinator(root: Route.login, container: DIContainer(), assembly: TestAssembly { _, _, _ in
             builds += 1
-            return AnyView(EmptyView())
-        }
+            return EmptyView()
+        })
         let rootID = coordinator.root.id
         _ = CoordinatorView(coordinator: coordinator).body
         _ = CoordinatorView(coordinator: coordinator).body
@@ -94,10 +94,10 @@ struct AssemblyCoordinatorTests {
     @Test func coordinatorForwardsProvidedContainer() {
         let container = DIContainer()
         var forwarded: DIContainer?
-        let coordinator = AssemblyCoordinator<Route>(root: .login, container: container) { _, resolved, _ in
+        let coordinator = AssemblyCoordinator(root: Route.login, container: container, assembly: TestAssembly { _, resolved, _ in
             forwarded = resolved
-            return AnyView(EmptyView())
-        }
+            return EmptyView()
+        })
         #expect(coordinator.container === container)
         #expect(forwarded === container)
     }
@@ -105,11 +105,11 @@ struct AssemblyCoordinatorTests {
     @Test func poppingReleasesModuleButKeepsRootAlive() {
         weak var rootProbe: Probe?
         weak var pushedProbe: Probe?
-        let coordinator = AssemblyCoordinator<Route>(root: .login, container: DIContainer()) { route, _, _ in
+        let coordinator = AssemblyCoordinator(root: Route.login, container: DIContainer(), assembly: TestAssembly { route, _, _ in
             let probe = Probe()
             if route == .login { rootProbe = probe } else { pushedProbe = probe }
-            return AnyView(ProbeView(probe: probe))
-        }
+            return ProbeView(probe: probe)
+        })
         coordinator.push(.details(1))
         #expect(rootProbe != nil)
         #expect(pushedProbe != nil)
@@ -120,11 +120,11 @@ struct AssemblyCoordinatorTests {
 
     @Test func dismissingReleasesModalModule() {
         weak var modalProbe: Probe?
-        let coordinator = AssemblyCoordinator<Route>(root: .login, container: DIContainer()) { route, _, _ in
+        let coordinator = AssemblyCoordinator(root: Route.login, container: DIContainer(), assembly: TestAssembly { route, _, _ in
             let probe = Probe()
             if route != .login { modalProbe = probe }
-            return AnyView(ProbeView(probe: probe))
-        }
+            return ProbeView(probe: probe)
+        })
         coordinator.presentSheet(.details(1))
         #expect(modalProbe != nil)
         coordinator.dismiss()
@@ -133,11 +133,11 @@ struct AssemblyCoordinatorTests {
 
     @Test func releasingFlowReleasesRootModule() {
         weak var rootProbe: Probe?
-        var coordinator: AssemblyCoordinator<Route>? = AssemblyCoordinator(root: .login, container: DIContainer()) { _, _, _ in
+        var coordinator: AssemblyCoordinator<TestAssembly<Route, ProbeView>>? = AssemblyCoordinator(root: .login, container: DIContainer(), assembly: TestAssembly { _, _, _ in
             let probe = Probe()
             rootProbe = probe
-            return AnyView(ProbeView(probe: probe))
-        }
+            return ProbeView(probe: probe)
+        })
         #expect(coordinator?.root.route == .login)
         coordinator = nil
         #expect(rootProbe == nil)

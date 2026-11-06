@@ -22,15 +22,15 @@ struct VIPCompositionTests {
         let container = DIContainer()
         container.apply(assemblies: [ServicesAssembly()])
         var flow: AuthCoordinator? = AuthCoordinator(container: container)
-        weak var weakFlow = flow
-        weak var weakNavigation = flow?.navigation
-        weak var weakInteractor = flow?.loginInteractor
-        #expect(weakNavigation != nil)
-        #expect(weakInteractor != nil)
+        let weakFlow = WeakReference(flow)
+        let weakNavigation = WeakReference(flow?.navigation)
+        let weakInteractor = WeakReference(flow?.loginInteractor)
+        #expect(weakNavigation.value != nil)
+        #expect(weakInteractor.value != nil)
         flow = nil
-        #expect(weakFlow == nil)
-        #expect(weakNavigation == nil)
-        #expect(weakInteractor == nil)
+        #expect(weakFlow.value == nil)
+        #expect(weakNavigation.value == nil)
+        #expect(weakInteractor.value == nil)
     }
 
     enum AuthRoute: Hashable { case login, registration }
@@ -91,19 +91,34 @@ struct VIPCompositionTests {
 
         init(container: DIContainer) { self.container = container }
 
-        lazy var navigation = AssemblyCoordinator<AuthRoute>(root: .login, container: container) { [weak self] route, container, _ in
-            guard let self else { return AnyView(EmptyView()) }
-            switch route {
-            case .login:
-                let view = LoginAssembly(container: container).assemble(coordinator: self)
-                self.loginInteractor = view.interactor
-                self.loginState = view.state
-                return AnyView(view)
-            case .registration:
-                return AnyView(Text("Registration"))
-            }
-        }
+        lazy var navigation = AssemblyCoordinator(
+            root: AuthRoute.login,
+            container: container,
+            assembly: AuthScreenAssembly(owner: self)
+        )
 
         func showRegistration() { navigation.push(.registration) }
     }
+
+    @MainActor struct AuthScreenAssembly: ScreenAssembly {
+        weak var owner: AuthCoordinator?
+
+        @ViewBuilder
+        func assemble(_ route: AuthRoute, container: DIContainer, coordinator: AssemblyCoordinator<Self>) -> some View {
+            switch route {
+            case .login:
+                if let owner { makeLogin(owner: owner, container: container) }
+            case .registration:
+                Text("Registration")
+            }
+        }
+
+        private func makeLogin(owner: AuthCoordinator, container: DIContainer) -> LoginView {
+            let view = LoginAssembly(container: container).assemble(coordinator: owner)
+            owner.loginInteractor = view.interactor
+            owner.loginState = view.state
+            return view
+        }
+    }
+
 }

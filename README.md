@@ -3,18 +3,18 @@
 A small SwiftUI navigation core with assembly-based screen construction and dependency injection. Architecture-independent: use it with MVVM, VIP, or other screen architectures.
 Requires iOS 17+, Swift 6, and Xcode 16+.
 
-## 2.0.0 (breaking API change)
+## 2.0.0: typed screen assemblies
 
-Version 2.0.0 replaces the 1.x API. It does not change an application's pinned 1.x dependency until you explicitly migrate it. There is no required tab coordinator, ViewModel protocol, navigation observer, or ViewModel cache.
+Version 2.0.0 uses statically typed screen assemblies. It does not change an application's pinned 1.x dependency until you explicitly migrate it. There is no required tab coordinator, ViewModel protocol, navigation observer, or ViewModel cache.
 
-- `AssemblyCoordinator<Route>` owns a root screen, a typed navigation stack, and one modal presentation.
+- `AssemblyCoordinator<YourScreenAssembly>` owns a root screen, a typed navigation stack, and one modal presentation.
 - `CoordinatorView` binds that state to `NavigationStack`, sheets, and full-screen covers.
 - A `Screen` owns one assembled module and has a unique ID, even when two routes have the same value.
 - `DIContainer`, `Scope`, and dependency-registration `Assembly` retain their existing API.
 
 ## Navigation and assembly
 
-Routes describe destinations; assemblies construct modules. The builder runs once for the root at coordinator initialization and once per successful push or presentation, never from SwiftUI `body`.
+Routes describe destinations; assemblies construct modules. `ScreenAssembly.Content` preserves the concrete view type, including conditional branches produced by `@ViewBuilder`. Screen content is never type-erased. Stable per-entry IDs independently distinguish repeated routes. The screen assembly runs once for the root at coordinator initialization and once per successful push or presentation, never from SwiftUI `body`.
 
 ```swift
 import Coordinator
@@ -25,17 +25,25 @@ enum AuthRoute: Hashable {
     case registration
 }
 
-@MainActor
-func makeAuthFlow(container: DIContainer) -> AssemblyCoordinator<AuthRoute> {
-    AssemblyCoordinator(root: .login, container: container) { route, container, coordinator in
+struct AuthScreenAssembly: ScreenAssembly {
+    @ViewBuilder
+    func assemble(
+        _ route: AuthRoute,
+        container: DIContainer,
+        coordinator: AssemblyCoordinator<Self>
+    ) -> some View {
         switch route {
         case .login:
-            // Replace with LoginAssembly(container: container).assemble(...).
-            return AnyView(Text("Login"))
+            Text("Login") // Or LoginAssembly(container: container).assemble(...).
         case .registration:
-            return AnyView(Text("Registration"))
+            Text("Registration")
         }
     }
+}
+
+@MainActor
+func makeAuthFlow(container: DIContainer) -> AssemblyCoordinator<AuthScreenAssembly> {
+    AssemblyCoordinator(root: .login, container: container, assembly: AuthScreenAssembly())
 }
 ```
 
@@ -53,11 +61,11 @@ coordinator.presentFullScreen(.registration)
 
 Only one modal is accepted at a time. Dismiss the existing modal before requesting another; a second request returns `false` without assembling a module. Modal content is not automatically wrapped in the parent's navigation stack. For a modal flow with its own pushes, assemble a child coordinator and its `CoordinatorView`.
 
-The builder receives the owning coordinator for dependency injection. Assemblies must not navigate or read `root` while constructing that root. Use weak coordinator references in retained interactors and weak captures when the builder captures an owning feature coordinator.
+The screen assembly receives the owning coordinator for dependency injection. Assemblies must not navigate or read `root` while constructing that root. Use weak coordinator references in retained interactors and weak captures when the screen assembly refers to an owning feature coordinator.
 
 ## Screen architecture: MVVM, VIP, and others
 
-The package defines no ViewModel, Interactor, Presenter, or ViewState protocols. Builders return SwiftUI views; the application chooses how those views are assembled and where navigation is requested.
+The package defines no ViewModel, Interactor, Presenter, or ViewState protocols. Screen assemblies return statically typed SwiftUI views; the application chooses how those views are assembled and where navigation is requested.
 
 With MVVM, an assembly injects services and a weak coordinator reference into a ViewModel. See [MVVMCompositionTests.swift](Tests/CoordinatorTests/MVVMCompositionTests.swift) for a compiled public-API example and lifetime verification.
 
@@ -71,7 +79,7 @@ View -> Interactor -> Service
 
 `LoginAssembly` resolves services from the container and constructs State, Presenter, Interactor, and View. Interactor and Presenter receive constructor dependencies; they do not resolve services themselves.
 
-A feature `AuthCoordinator` can conform to a small `LoginCoordinating: AnyObject` protocol and contain an `AssemblyCoordinator<AuthRoute>`. The interactor holds a weak `LoginCoordinating` reference. Keep the owning feature coordinator alive above `CoordinatorView`.
+A feature `AuthCoordinator` can conform to a small `LoginCoordinating: AnyObject` protocol and contain an `AssemblyCoordinator<AuthScreenAssembly>`. The interactor holds a weak `LoginCoordinating` reference. Keep the owning feature coordinator alive above `CoordinatorView`.
 
 See [VIPCompositionTests.swift](Tests/CoordinatorTests/VIPCompositionTests.swift) for a compiled public-API example, including assembly, DI, VIP, coordinator composition, and deallocation checks. Its authentication service is deliberately a synchronous demo, not production networking.
 
@@ -137,4 +145,8 @@ Tests cover route identity, assembly frequency, stack mutations, modal exclusivi
 4. Replace `AppRootView` / flow hosts with `CoordinatorView`; keep tabs in app code.
 5. Remove `ViewModelFactory`, `ViewModelStore`, `AnyRoute`, and `NextScreen` usage.
 
-The package remains named `Coordinator`. Use version `2.0.0` or newer for this API; existing 1.x callers require migration.
+## Migration from the initial closure-based implementation
+
+Replace the `assemble:` closure with a `ScreenAssembly` conformer. Its `assemble` method uses `@ViewBuilder` and returns `some View`; return the actual views from each route branch. Change stored coordinator types from `AssemblyCoordinator<Route>` to `AssemblyCoordinator<YourScreenAssembly>` and pass `assembly:` to the initializer.
+
+The package remains named `Coordinator`. Use tag `v2.0.0` for the typed API. Callers using the initial closure-based implementation require the migration above.

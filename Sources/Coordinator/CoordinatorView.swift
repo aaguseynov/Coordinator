@@ -1,10 +1,10 @@
 import SwiftUI
 
 /// Own the coordinator above this view (usually with @State in the flow's root).
-public struct CoordinatorView<Route: Hashable>: View {
-    @Bindable private var coordinator: AssemblyCoordinator<Route>
+public struct CoordinatorView<Assembler: ScreenAssembly>: View {
+    @Bindable private var coordinator: AssemblyCoordinator<Assembler>
 
-    public init(coordinator: AssemblyCoordinator<Route>) {
+    public init(coordinator: AssemblyCoordinator<Assembler>) {
         self.coordinator = coordinator
     }
 
@@ -12,7 +12,7 @@ public struct CoordinatorView<Route: Hashable>: View {
         NavigationStack(path: $coordinator.path) {
             coordinator.root.content
                 .id(coordinator.root.id)
-                .navigationDestination(for: Screen<Route>.self) { screen in
+                .navigationDestination(for: Screen<Assembler.Route, Assembler.Content>.self) { screen in
                     screen.content.id(screen.id)
                 }
         }
@@ -24,7 +24,7 @@ public struct CoordinatorView<Route: Hashable>: View {
         }
     }
 
-    func modalBinding(for style: PresentationStyle) -> Binding<Presentation<Route>?> {
+    func modalBinding(for style: PresentationStyle) -> Binding<Presentation<Assembler.Route, Assembler.Content>?> {
         let id = coordinator.presentation.flatMap { $0.style == style ? $0.id : nil }
         return Binding(
             get: {
