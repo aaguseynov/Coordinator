@@ -23,6 +23,7 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("AccessLevelOnImport")
             ]
-        )
+        ),
+        .testTarget(name: "CoordinatorTests", dependencies: ["Coordinator"])
     ]
 )

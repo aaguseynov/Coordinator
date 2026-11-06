@@ -1,210 +1,140 @@
 # Coordinator
 
-A lightweight, type-safe navigation framework for SwiftUI applications using the Coordinator pattern with built-in Dependency Injection.
+A small SwiftUI navigation core with assembly-based screen construction and dependency injection. Architecture-independent: use it with MVVM, VIP, or other screen architectures.
+Requires iOS 17+, Swift 6, and Xcode 16+.
 
-## Requirements
+## 2.0.0 (breaking API change)
 
-- iOS 17.0+
-- Swift 6.0+
-- Xcode 16.0+
+Version 2.0.0 replaces the 1.x API. It does not change an application's pinned 1.x dependency until you explicitly migrate it. There is no required tab coordinator, ViewModel protocol, navigation observer, or ViewModel cache.
 
-## Installation
+- `AssemblyCoordinator<Route>` owns a root screen, a typed navigation stack, and one modal presentation.
+- `CoordinatorView` binds that state to `NavigationStack`, sheets, and full-screen covers.
+- A `Screen` owns one assembled module and has a unique ID, even when two routes have the same value.
+- `DIContainer`, `Scope`, and dependency-registration `Assembly` retain their existing API.
 
-### Swift Package Manager
+## Navigation and assembly
 
-Add the following to your `Package.swift`:
-
-```swift
-dependencies: [
-    .package(url: "https://github.com/aaguseynov/Coordinator.git", from: "1.0.0")
-]
-```
-
-Or add it directly in Xcode via **File → Add Package Dependencies**.
-
-## Features
-
-- **Coordinator Pattern** — Clean separation of navigation logic from views
-- **Type-Safe Routing** — Compile-time checked navigation with `AppRoute` protocol
-- **Tab Navigation** — Built-in support for `TabView` with independent navigation stacks
-- **Modal Presentation** — Sheets and fullscreen covers with coordinator integration
-- **Dependency Injection** — Lightweight DI container with multiple scopes
-- **ViewModel Lifecycle** — Automatic ViewModel management tied to navigation stack
-- **Observation-Ready** — Built with Swift's `@Observable` macro for seamless SwiftUI integration
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                     AppRootView                         │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │              AppTabCoordinator                    │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │  │
-│  │  │ FlowCoord 1 │  │ FlowCoord 2 │  │ FlowCoord │  │  │
-│  │  │ (Tab 1)     │  │ (Tab 2)     │  │ (Tab N)   │  │  │
-│  │  └─────────────┘  └─────────────┘  └───────────┘  │  │
-│  └───────────────────────────────────────────────────┘  │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │                  DIContainer                      │  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Quick Start
-
-### 1. Define Your Routes
+Routes describe destinations; assemblies construct modules. The builder runs once for the root at coordinator initialization and once per successful push or presentation, never from SwiftUI `body`.
 
 ```swift
 import Coordinator
+import SwiftUI
 
-enum HomeRoute: AppRoute {
-    case home
-    case detail(id: String)
-    case settings
-    
-    @MainActor
-    func build(coordinator: AppFlowCoordinator, key: AnyRoute) -> RouteView {
-        RouteView({
-            switch self {
-            case .home:
-                HomeView(viewModel: coordinator.viewModelFactory.make(
-                    HomeViewModel.self,
-                    key: key,
-                    store: coordinator.viewModelStore
-                ) { container in
-                    HomeViewModel(service: container.resolve())
-                })
-            case .detail(let id):
-                DetailView(id: id)
-            case .settings:
-                SettingsView()
-            }
-        }, id: key)
+enum AuthRoute: Hashable {
+    case login
+    case registration
+}
+
+@MainActor
+func makeAuthFlow(container: DIContainer) -> AssemblyCoordinator<AuthRoute> {
+    AssemblyCoordinator(root: .login, container: container) { route, container, coordinator in
+        switch route {
+        case .login:
+            // Replace with LoginAssembly(container: container).assemble(...).
+            return AnyView(Text("Login"))
+        case .registration:
+            return AnyView(Text("Registration"))
+        }
     }
 }
 ```
 
-### 2. Create Your ViewModel
+Own the resulting coordinator with `@State` in the flow's root view; render it using `CoordinatorView(coordinator: coordinator)`. Do not recreate coordinators while evaluating `body`.
 
 ```swift
-import Coordinator
-import Observation
+coordinator.push(.registration)
+coordinator.pop()
+coordinator.popToRoot()
 
-@Observable
-final class HomeViewModel: FlowViewModel {
-    var navigation: NextScreen?
-    
-    private let service: HomeService
-    
-    init(service: HomeService) {
-        self.service = service
-    }
-    
-    func showDetail(id: String) {
-        navigation = .push(HomeRoute.detail(id: id))
-    }
-    
-    func showSettings() {
-        navigation = .presentSheet(HomeRoute.settings)
-    }
-}
+coordinator.presentSheet(.registration)      // Bool: accepted or already presenting
+coordinator.dismiss()
+coordinator.presentFullScreen(.registration)
 ```
 
-### 3. Set Up Dependency Injection
+Only one modal is accepted at a time. Dismiss the existing modal before requesting another; a second request returns `false` without assembling a module. Modal content is not automatically wrapped in the parent's navigation stack. For a modal flow with its own pushes, assemble a child coordinator and its `CoordinatorView`.
+
+The builder receives the owning coordinator for dependency injection. Assemblies must not navigate or read `root` while constructing that root. Use weak coordinator references in retained interactors and weak captures when the builder captures an owning feature coordinator.
+
+## Screen architecture: MVVM, VIP, and others
+
+The package defines no ViewModel, Interactor, Presenter, or ViewState protocols. Builders return SwiftUI views; the application chooses how those views are assembled and where navigation is requested.
+
+With MVVM, an assembly injects services and a weak coordinator reference into a ViewModel. See [MVVMCompositionTests.swift](Tests/CoordinatorTests/MVVMCompositionTests.swift) for a compiled public-API example and lifetime verification.
+
+With VIP, an assembly creates the module as follows:
+
+```text
+View -> Interactor -> Service
+            |-> Presenter -> observable ViewState -> View
+            |-> feature Coordinator -> AssemblyCoordinator
+```
+
+`LoginAssembly` resolves services from the container and constructs State, Presenter, Interactor, and View. Interactor and Presenter receive constructor dependencies; they do not resolve services themselves.
+
+A feature `AuthCoordinator` can conform to a small `LoginCoordinating: AnyObject` protocol and contain an `AssemblyCoordinator<AuthRoute>`. The interactor holds a weak `LoginCoordinating` reference. Keep the owning feature coordinator alive above `CoordinatorView`.
+
+See [VIPCompositionTests.swift](Tests/CoordinatorTests/VIPCompositionTests.swift) for a compiled public-API example, including assembly, DI, VIP, coordinator composition, and deallocation checks. Its authentication service is deliberately a synchronous demo, not production networking.
+
+## Dependency injection
 
 ```swift
-import Coordinator
-
 struct ServicesAssembly: Assembly {
     func assemble(into container: DIContainer) {
-        container.register(HomeService.self, scope: .container) { _ in
-            HomeServiceImpl()
-        }
-        
-        container.register(APIClient.self, scope: .transient) { _ in
-            APIClient()
+        container.register(APIClient.self, scope: .container) { _ in APIClient() }
+        container.register(AuthService.self) { container in
+            AuthService(client: container.resolve(APIClient.self))
         }
     }
 }
+
+let container = DIContainer()
+container.apply(assemblies: [ServicesAssembly()])
 ```
 
-### 4. Configure Tabs
+| Scope | Lifetime |
+|---|---|
+| `.transient` | New value on each resolution |
+| `.container` | Retained until container deallocation or re-registration |
+| `.weak` | Same reference while another owner retains it; recreated afterward |
 
-```swift
-import Coordinator
+Weak scope requires a class instance, including class-backed protocol registrations. Re-registering a type clears both caches for that type. Missing registrations and invalid weak-scoped values fail fast. Register and resolve on one actor (normally `MainActor` at composition time); the container is not thread-safe. Avoid cyclic service dependencies and factories that strongly capture their container.
 
-let tabs: [TabDescriptor] = [
-    TabDescriptor(
-        id: 0,
-        title: "Home",
-        systemImage: "house",
-        initialRoute: HomeRoute.home
-    ),
-    TabDescriptor(
-        id: 1,
-        title: "Profile",
-        systemImage: "person",
-        initialRoute: ProfileRoute.profile
-    )
-]
+## Screen lifetime
+
+The coordinator retains the assembled root, stack entries, and active modal. SwiftUI back gestures mutate the same `path` used by programmatic navigation; there is no shadow stack. Removed entries are no longer retained by the coordinator. SwiftUI may keep a disappearing screen alive until its transition completes. External owners and tasks can also extend a module's lifetime.
+
+`Screen` can be copied as a normal value; retaining a copy also retains its content. It is not `Sendable`. Navigation and module assembly run on `MainActor`.
+
+## App root and tabs
+
+Create the container at the application composition root, outside any tab coordinator:
+
+```text
+AppCoordinator + shared DIContainer + session
+  auth -> AuthCoordinator
+  main -> MainCoordinator
+            selected tab + independent section coordinators
 ```
 
-### 5. Initialize the App
+An application's root switches auth/main based on its session. Tabs are ordinary app UI and do not own global dependency registration or other flows' modal navigation. Create a new main flow after logout/login instead of reusing previous authenticated navigation state.
 
-```swift
-import SwiftUI
-import Coordinator
+## Validation
 
-@main
-struct MyApp: App {
-    @State private var coordinator = AppTabCoordinator(
-        tabs: tabs,
-        assemblies: [ServicesAssembly()]
-    )
-    
-    var body: some Scene {
-        WindowGroup {
-            AppRootView(coordinator: coordinator, tabs: tabs)
-        }
-    }
-}
+Run the `Coordinator` scheme's tests on an iOS simulator:
+
+```sh
+xcodebuild -scheme Coordinator \
+  -destination 'platform=iOS Simulator,name=iPhone 15 Pro Max,OS=17.2' test
 ```
 
-## Navigation Actions
+Tests cover route identity, assembly frequency, stack mutations, modal exclusivity, stale dismissal protection, module lifetime, DI scopes, re-registration, and public-API MVVM and VIP composition. Stack mutation tests exercise the state contract; they are not end-to-end gesture/UI tests.
 
-The `NextScreen` enum provides all navigation actions:
+## Migration from 1.x
 
-| Action | Description |
-|--------|-------------|
-| `.push(route)` | Push a new screen onto the navigation stack |
-| `.pop` | Pop the current screen |
-| `.popToRoot` | Pop to the root of the current tab |
-| `.switchTab(id)` | Switch to another tab |
-| `.presentSheet(route)` | Present a sheet modal |
-| `.presentFullScreen(route)` | Present a fullscreen modal |
-| `.dismissModal` | Dismiss the current modal |
+1. Move DI container ownership from `AppTabCoordinator` to the app composition root.
+2. Replace `AppRoute.build` with a plain `Hashable` route enum and an assembly builder.
+3. Replace `FlowViewModel.navigation` and `observe` with explicit feature-coordinator methods.
+4. Replace `AppRootView` / flow hosts with `CoordinatorView`; keep tabs in app code.
+5. Remove `ViewModelFactory`, `ViewModelStore`, `AnyRoute`, and `NextScreen` usage.
 
-## Dependency Injection Scopes
-
-| Scope | Behavior |
-|-------|----------|
-| `.transient` | New instance created on every resolve |
-| `.container` | Singleton — shared instance for the container lifetime |
-| `.weak` | Cached with weak reference — recreated when deallocated |
-
-## Core Components
-
-| Component | Purpose |
-|-----------|---------|
-| `AppTabCoordinator` | Manages tabs and their flow coordinators |
-| `AppFlowCoordinator` | Handles navigation within a single flow/tab |
-| `AppRoute` | Protocol for defining navigable screens |
-| `FlowViewModel` | Protocol for ViewModels with navigation capability |
-| `DIContainer` | Dependency injection container |
-| `Assembly` | Protocol for registering dependencies |
-| `ViewModelStore` | Manages ViewModel lifecycle per route |
-| `NavigationStore` | Wraps SwiftUI's `NavigationPath` |
-
-## License
-
-MIT License. See [LICENSE](LICENSE) for details.
+The package remains named `Coordinator`. Use version `2.0.0` or newer for this API; existing 1.x callers require migration.

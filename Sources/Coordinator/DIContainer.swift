@@ -9,6 +9,7 @@ public enum Scope {
     case weak
 }
 
+/// Configure and resolve this container on one actor; it is not thread-safe.
 public final class DIContainer {
     private struct Registration {
         let scope: Scope
@@ -17,7 +18,7 @@ public final class DIContainer {
     
     private var registrations: [ObjectIdentifier: Registration] = [:]
     private var strongStorage: [ObjectIdentifier: Any] = [:]
-    private var weakStorage: NSMapTable<AnyObject, AnyObject> = NSMapTable.weakToWeakObjects()
+    private var weakStorage: [ObjectIdentifier: WeakBox<AnyObject>] = [:]
     
     public init() {}
     
@@ -26,7 +27,10 @@ public final class DIContainer {
         scope: Scope = .transient,
         factory: @escaping (DIContainer) -> T
     ) {
-        registrations[ObjectIdentifier(type)] = Registration(
+        let key = ObjectIdentifier(type)
+        strongStorage.removeValue(forKey: key)
+        weakStorage.removeValue(forKey: key)
+        registrations[key] = Registration(
             scope: scope,
             factory: { container in factory(container) }
         )
@@ -52,11 +56,13 @@ public final class DIContainer {
             return instance
             
         case .weak:
-            if let existing = weakStorage.object(forKey: key as AnyObject) as? T {
+            if let existing = weakStorage[key]?.value as? T {
                 return existing
             }
             let instance = registration.factory(self) as! T
-            weakStorage.setObject(instance as AnyObject, forKey: key as AnyObject)
+            precondition(Mirror(reflecting: instance).displayStyle == .class,
+                         "Weak scope requires a reference type: \(type)")
+            weakStorage[key] = WeakBox(instance as AnyObject)
             return instance
         }
     }
